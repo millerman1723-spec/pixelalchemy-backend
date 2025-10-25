@@ -120,7 +120,7 @@ app.post('/generate', validateGenerateRequest, async (req, res) => {
     const fullPrompt = `${prompt}. --negative ${negative || 'blurry, low quality, watermarks'}`;
     
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash-image-preview" 
+      model: "gemini-pro-vision" 
     });
 
     let request;
