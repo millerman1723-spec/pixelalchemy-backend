@@ -114,7 +114,7 @@ app.post('/generate', validateGenerateRequest, async (req, res) => {
     const { prompt, negative, image, mask } = req.body;
     
     // NOTE: creativity and strength parameters are typically used for older Imagen models.
-    // For gemini-2.5-flash-image-preview, control is primarily done via prompt and mask.
+    // For gemini-pro-vision, control is primarily done via prompt and mask.
 
     // Construct the full prompt, including negative keywords within the prompt text
     const fullPrompt = `${prompt}. --negative ${negative || 'blurry, low quality, watermarks'}`;
