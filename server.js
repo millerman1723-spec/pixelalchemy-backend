@@ -7,6 +7,9 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
+// Allow setting the allowed origin via environment (useful in Render)
+const ALLOWED_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://millerman1723-spec.github.io';
+
 // Rate limiting - 100 requests per 15 minutes per IP
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -19,7 +22,7 @@ app.use(limiter);
 
 // Allow requests from your specific GitHub Pages frontend
 app.use(cors({
-  origin: 'https://millerman1723-spec.github.io'
+  origin: ALLOWED_ORIGIN
 }));
 
 // Allow for large JSON payloads, necessary for base64 image data
@@ -71,12 +74,14 @@ app.get('/health', (req, res) => {
 });
 
 const API_KEY = process.env.GOOGLE_API_KEY;
-if (!API_KEY) {
-  console.error("❌ ERROR: GOOGLE_API_KEY is not set in environment variables!");
-  process.exit(1);
+let genAI = null;
+const API_KEY_AVAILABLE = !!API_KEY;
+if (!API_KEY_AVAILABLE) {
+  // Do not exit - let the service start so health checks work and Render can show logs.
+  console.warn("⚠️ WARNING: GOOGLE_API_KEY is not set. /generate will return 503 until this is configured.");
+} else {
+  genAI = new GoogleGenerativeAI(API_KEY);
 }
-
-const genAI = new GoogleGenerativeAI(API_KEY);
 
 /**
  * Converts base64 image data into the structured Part object required by the Gemini API.
