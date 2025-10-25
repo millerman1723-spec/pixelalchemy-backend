@@ -103,6 +103,14 @@ function base64ToGenerativePart(base64Data, mimeType) {
 
 app.post('/generate', validateGenerateRequest, async (req, res) => {
   try {
+    // Return 503 if API key is not configured
+    if (!API_KEY_AVAILABLE) {
+      return res.status(503).json({
+        error: "Service Unavailable",
+        details: "The Gemini API key is not configured. Please check server logs."
+      });
+    }
+
     const { prompt, negative, image, mask } = req.body;
     
     // NOTE: creativity and strength parameters are typically used for older Imagen models.
