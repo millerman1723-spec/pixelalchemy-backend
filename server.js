@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-// Using the recommended Google Gen AI SDK
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+// Correct Google AI SDK import
+const { GoogleGenerativeAI } = require('@google-ai/generativelanguage');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const axios = require('axios');
@@ -9,8 +9,23 @@ const { GoogleAuth } = require('google-auth-library');
 
 const app = express();
 
+// --- CRITICAL SETUP SECTION (DO NOT MODIFY THIS SECTION) ---
+// Verify API key is set
+const API_KEY = process.env.GOOGLE_API_KEY;
+if (!API_KEY) {
+  console.error("❌ ERROR: GOOGLE_API_KEY is not set in environment variables!");
+  console.error("Please set this in Render.com under Environment Variables");
+  process.exit(1);
+}
+
+// Initialize Google AI client
+const genAI = new GoogleGenerativeAI(API_KEY);
+console.log("✅ Google AI client initialized successfully");
+// --- END CRITICAL SETUP SECTION ---
+
 // Allow setting the allowed origin via environment (useful in Render)
 const ALLOWED_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://millerman1723-spec.github.io';
+console.log(`🌐 Allowed frontend origin: ${ALLOWED_ORIGIN}`);
 
 // Rate limiting - 100 requests per 15 minutes per IP
 const limiter = rateLimit({
@@ -77,26 +92,9 @@ app.get('/health', (req, res) => {
 
 // Diagnostic: list models available to this API key/project
 app.get('/models', async (req, res) => {
-  if (!API_KEY_AVAILABLE) {
-    // If API key not available, try service account token
-    if (!SA_AVAILABLE) {
-      return res.status(503).json({ error: 'Service Unavailable', details: 'No API key or service account configured.' });
-    }
-  }
-
   try {
-    if (API_KEY_AVAILABLE) {
-      const response = await axios.get('https://generativelanguage.googleapis.com/v1/models', {
-        params: { key: API_KEY }
-      });
-      return res.json(response.data);
-    }
-
-    // Use service account token to list models
-    const token = await getAccessToken();
-    if (!token) throw new Error('Failed to obtain access token from service account');
     const response = await axios.get('https://generativelanguage.googleapis.com/v1/models', {
-      headers: { Authorization: `Bearer ${token}` }
+      params: { key: API_KEY }
     });
     return res.json(response.data);
   } catch (err) {
@@ -104,37 +102,6 @@ app.get('/models', async (req, res) => {
     return res.status(500).json({ error: 'Failed to list models', details: err.response?.data || err.message });
   }
 });
-
-const API_KEY = process.env.GOOGLE_API_KEY;
-let genAI = null;
-const API_KEY_AVAILABLE = !!API_KEY;
-const SA_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.SERVICE_ACCOUNT_JSON;
-let googleAuthClient = null;
-const SA_AVAILABLE = !!SA_PATH;
-if (!API_KEY_AVAILABLE) {
-  // Do not exit - let the service start so health checks work and Render can show logs.
-  console.warn("⚠️ WARNING: GOOGLE_API_KEY is not set. /generate will return 503 until this is configured.");
-} else {
-  genAI = new GoogleGenerativeAI(API_KEY);
-}
-
-// If a service account JSON path is provided, initialize GoogleAuth client
-if (SA_AVAILABLE) {
-  try {
-    googleAuthClient = new GoogleAuth({ keyFilename: SA_PATH, scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
-    console.log('✅ Google service account auth configured via', SA_PATH);
-  } catch (e) {
-    console.error('Failed to configure GoogleAuth client:', e.message);
-    googleAuthClient = null;
-  }
-}
-
-async function getAccessToken() {
-  if (!googleAuthClient) return null;
-  const client = await googleAuthClient.getClient();
-  const tokenResponse = await client.getAccessToken();
-  return tokenResponse?.token || null;
-}
 
 /**
  * Converts base64 image data into the structured Part object required by the Gemini API.
@@ -156,25 +123,14 @@ function base64ToGenerativePart(base64Data, mimeType) {
 
 app.post('/generate', validateGenerateRequest, async (req, res) => {
   try {
-    // Return 503 if API key is not configured
-    if (!API_KEY_AVAILABLE) {
-      return res.status(503).json({
-        error: "Service Unavailable",
-        details: "The Gemini API key is not configured. Please check server logs."
-      });
-    }
-
     const { prompt, negative, image, mask } = req.body;
     
-    // NOTE: creativity and strength parameters are typically used for older Imagen models.
-    // For gemini-pro-vision, control is primarily done via prompt and mask.
-
     // Construct the full prompt, including negative keywords within the prompt text
     const fullPrompt = `${prompt}. --negative ${negative || 'blurry, low quality, watermarks'}`;
     
-    // Use the full resource name for the model (some API versions expect 'models/NAME')
+    // Use the correct model name
     const model = genAI.getGenerativeModel({ 
-      model: "models/gemini-pro-vision" 
+      model: "gemini-2.5-flash-image-preview" 
     });
 
     let request;
@@ -205,34 +161,9 @@ app.post('/generate', validateGenerateRequest, async (req, res) => {
       request = fullPrompt;
     }
     
-    // Send the request to the Gemini API. Try SDK first (API key), else use service account REST call.
-    let response;
-    try {
-      const result = await model.generateContent(request);
-      response = await result.response;
-    } catch (sdkErr) {
-      // If SDK failed and we have a service account, try REST call using bearer token
-      console.warn('SDK generateContent failed:', sdkErr.message);
-      if (!SA_AVAILABLE) throw sdkErr;
-
-      const token = await getAccessToken();
-      if (!token) throw new Error('Failed to obtain access token for REST fallback');
-
-      // Determine REST endpoint for the model
-      const modelName = (model?.name || 'models/gemini-pro-vision').replace(/^models\//, 'models/');
-      const url = `https://generativelanguage.googleapis.com/v1/${modelName}:generateContent`;
-
-      // Build REST payload: when request is a string use text input, else pass contents
-      let restBody;
-      if (typeof request === 'string') {
-        restBody = { prompt: request };
-      } else {
-        restBody = request;
-      }
-
-      const restRes = await axios.post(url, restBody, { headers: { Authorization: `Bearer ${token}` } });
-      response = restRes.data;
-    }
+    // Send the request to the Gemini API
+    const result = await model.generateContent(request);
+    const response = await result.response;
     
     // Extract the generated image data (base64)
     const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
@@ -264,4 +195,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log("✨ Ready to process PixelAlchemy requests");
+  console.log("🔑 API key status: SET");
+  console.log("📝 To test, use Postman or PowerShell to send a POST request to /generate");
 });
